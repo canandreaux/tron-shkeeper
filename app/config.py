@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     BLOCK_SCANNER_STATS_LOG_PERIOD: int = 300
     BLOCK_SCANNER_MAX_BLOCK_CHUNK_SIZE: int = 1
     BLOCK_SCANNER_INTERVAL_TIME: int = 3
+    BLOCK_SCANNER_CHUNK_SLEEP_TIME: float = 0
     BLOCK_SCANNER_LAST_BLOCK_NUM_HINT: int | None = None
     # Connection manager
     MULTISERVER_CONFIG_JSON: Json[List[TronFullnode]] | None = None

@@ -53,6 +53,8 @@ class BlockScanner:
                             f"Commiting chunk {blocks.start} - {blocks.stop - 1}"
                         )
                         self.set_last_seen_block_num(blocks.stop - 1)
+                        if config.BLOCK_SCANNER_CHUNK_SLEEP_TIME:
+                            time.sleep(config.BLOCK_SCANNER_CHUNK_SLEEP_TIME)
                     else:
                         chunk_retry_sleep_period = 5
                         logger.info(
