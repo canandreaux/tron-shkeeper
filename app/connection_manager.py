@@ -63,13 +63,10 @@ class ConnectionManager:
         return Tron(provider)
 
     def get_latest_block_number(self) -> int:
-        client = self.get_client()
+        server_id = self.get_current_server_id()
+        if server_id is None:
+            raise NoServerSet("Current server is not set.")
         try:
-            return client.get_latest_block_number()
-        except (KeyError, TypeError):
-            server_id = self.get_current_server_id()
-            if server_id is None:
-                raise NoServerSet("Current server is not set.")
             resp = requests.post(
                 f"{self.servers[server_id].url}/wallet/getnowblock",
                 json={},
@@ -77,6 +74,9 @@ class ConnectionManager:
             )
             resp.raise_for_status()
             return int(resp.json()["block_header"]["raw_data"]["number"])
+        except Exception:
+            client = self.get_client()
+            return client.get_latest_block_number()
 
     def get_current_server_id(self):
         row = query_db2(
