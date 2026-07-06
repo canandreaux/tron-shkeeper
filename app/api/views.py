@@ -71,7 +71,7 @@ def get_transaction(txid):
     tx = tron_client.get_transaction(txid)
     tx_info = tron_client.get_transaction_info(txid)
     try:
-        latest_block_number = tron_client.get_latest_block_number()
+        latest_block_number = ConnectionManager.manager().get_latest_block_number()
         tx_block_number = tx_info["blockNumber"]
         confirmations = latest_block_number - tx_block_number or 1
     except tronpy.exceptions.TransactionNotFound:

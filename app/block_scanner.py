@@ -127,7 +127,7 @@ class BlockScanner:
         )
 
     def get_current_height(self):
-        n = ConnectionManager.client().get_latest_block_number()
+        n = ConnectionManager.manager().get_latest_block_number()
         logger.debug(f"Block height is {n}")
         return n
 

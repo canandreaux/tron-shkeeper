@@ -62,6 +62,22 @@ class ConnectionManager:
         provider.sess.mount("https://", adapter)
         return Tron(provider)
 
+    def get_latest_block_number(self) -> int:
+        client = self.get_client()
+        try:
+            return client.get_latest_block_number()
+        except (KeyError, TypeError):
+            server_id = self.get_current_server_id()
+            if server_id is None:
+                raise NoServerSet("Current server is not set.")
+            resp = requests.post(
+                f"{self.servers[server_id].url}/wallet/getnowblock",
+                json={},
+                timeout=config.TRON_CLIENT_TIMEOUT,
+            )
+            resp.raise_for_status()
+            return int(resp.json()["block_header"]["raw_data"]["number"])
+
     def get_current_server_id(self):
         row = query_db2(
             'SELECT value FROM settings WHERE name = "current_server_id"', one=True
@@ -83,19 +99,36 @@ class ConnectionManager:
         servers_status = []
         for server_id, server in enumerate(self.servers):
             try:
-                # node info
-                resp = requests.get(f"{server.url}/wallet/getnodeinfo")
+                resp = requests.get(
+                    f"{server.url}/wallet/getnodeinfo",
+                    timeout=config.TRON_CLIENT_TIMEOUT,
+                )
                 resp.raise_for_status()
                 node_info = resp.json()
 
-                # remove unneeded info
-                del node_info["peerList"]
-                del node_info["machineInfo"]["memoryDescInfoList"]
-
-                # convert "Num:XXX,ID:YYY" to XXX
-                node_info["block"] = int(
-                    [j for i in node_info["block"].split(",") for j in i.split(":")][1]
-                )
+                if "block" in node_info:
+                    node_info.pop("peerList", None)
+                    if "machineInfo" in node_info:
+                        node_info["machineInfo"].pop("memoryDescInfoList", None)
+                    node_info["block"] = int(
+                        [
+                            j
+                            for i in node_info["block"].split(",")
+                            for j in i.split(":")
+                        ][1]
+                    )
+                else:
+                    resp = requests.post(
+                        f"{server.url}/wallet/getnowblock",
+                        json={},
+                        timeout=config.TRON_CLIENT_TIMEOUT,
+                    )
+                    resp.raise_for_status()
+                    now_block = resp.json()
+                    node_info = {
+                        "block": int(now_block["block_header"]["raw_data"]["number"]),
+                        "configNodeInfo": {"codeVersion": "unknown"},
+                    }
 
                 # last block info
                 resp = requests.post(
