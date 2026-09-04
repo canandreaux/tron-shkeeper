@@ -60,7 +60,31 @@ class ConnectionManager:
         adapter = requests.adapters.HTTPAdapter(pool_maxsize=100)
         provider.sess.mount("http://", adapter)
         provider.sess.mount("https://", adapter)
-        return Tron(provider)
+        client = Tron(provider)
+        client.get_latest_solid_block_id = lambda: self._get_latest_solid_block_id(
+            client
+        )
+        return client
+
+    def _get_latest_solid_block_id(self, client: Tron) -> str:
+        try:
+            info = client.provider.make_request("wallet/getnodeinfo")
+            solidity_block = info.get("solidityBlock")
+            if solidity_block:
+                return solidity_block.split(",ID:", 1)[-1]
+        except Exception as e:
+            logger.warning(f"Unable to fetch solidityBlock from getnodeinfo: {e}")
+
+        for endpoint in ("walletsolidity/getnowblock", "wallet/getnowblock"):
+            try:
+                block = client.provider.make_request(endpoint, {})
+                block_id = block.get("blockID")
+                if block_id:
+                    return block_id
+            except Exception as e:
+                logger.warning(f"Unable to fetch blockID from {endpoint}: {e}")
+
+        raise Exception("Unable to fetch latest solid block id from TRON node")
 
     def get_latest_block_number(self) -> int:
         server_id = self.get_current_server_id()
