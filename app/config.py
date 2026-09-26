@@ -1,13 +1,11 @@
 from decimal import Decimal
 from functools import cache
-from typing import List
 
-from pydantic import Field, Json, field_validator
+from pydantic import Field, Json
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .custom.aml.schemas import ExternalDrain
-from .schemas import TronFullnode, TronNetwork, Token, TronSymbol, SrVote
 from .exceptions import UnknownToken
+from .schemas import SrVote, Token, TronFullnode, TronNetwork, TronSymbol
 
 
 class Settings(BaseSettings):
@@ -15,9 +13,7 @@ class Settings(BaseSettings):
 
     TRON_NETWORK: TronNetwork = TronNetwork.mainnet
     DEBUG: bool = False
-    DATABASE: str = "data/database.db"
-    DB_URI: str = "sqlite:///data/tron.db"
-    BALANCES_DATABASE: str = "data/trc20balances.db"
+    DB_URI: str = "mysql+pymysql://root:shkeeper@mariadb/tron-shkeeper?charset=utf8mb4"
     CONCURRENT_MAX_WORKERS: int = 1
     CONCURRENT_MAX_RETRIES: int = 10
     BALANCES_RESCAN_PERIOD: int = 3600
@@ -34,10 +30,10 @@ class Settings(BaseSettings):
     API_PASSWORD: str = Field("shkeeper", alias="BTC_PASSWORD")
     SHKEEPER_BACKEND_KEY: str = "shkeeper"
     SHKEEPER_HOST: str = "localhost:5000"
-    INTERNAL_TX_FEE: Decimal = Decimal("40")
-    TX_FEE: Decimal = Decimal("40")  # includes bandwidth, energy and activation fees
+    INTERNAL_TX_FEE: Decimal = Decimal(40)
+    TX_FEE: Decimal = Decimal(40)  # includes bandwidth, energy and activation fees
     TX_FEE_LIMIT: Decimal = Decimal(
-        "50"
+        50
     )  # max TRX tx can burn for resources (energy, bandwidth)
     BANDWIDTH_PER_TRX_TRANSFER: int = 270
     BANDWIDTH_PER_DELEGE_CALL: int = 278
@@ -52,7 +48,7 @@ class Settings(BaseSettings):
     BLOCK_SCANNER_CHUNK_SLEEP_TIME: float = 0
     BLOCK_SCANNER_LAST_BLOCK_NUM_HINT: int | None = None
     # Connection manager
-    MULTISERVER_CONFIG_JSON: Json[List[TronFullnode]] | None = None
+    MULTISERVER_CONFIG_JSON: Json[list[TronFullnode]] | None = None
     MULTISERVER_REFRESH_BEST_SERVER_PERIOD: int = 20
     # Account encryption
     FORCE_WALLET_ENCRYPTION: bool = False
@@ -60,29 +56,24 @@ class Settings(BaseSettings):
     DEVMODE_ENCRYPTION_PW: str | None = None
     DEVMODE_SKIP_NOTIFICATIONS: bool = False
     DEVMODE_CELERY_NODELAY: bool = False
-    # AML
-    EXTERNAL_DRAIN_CONFIG: ExternalDrain | None = None
-    DELAY_AFTER_FEE_TRANSFER: float = 60
-    AML_RESULT_UPDATE_PERIOD: int = 120
-    AML_SWEEP_ACCOUNTS_PERIOD: int = 3600
-    AML_WAIT_BEFORE_API_CALL: int = 320
     # Resource delegation
     ENERGY_DELEGATION_MODE: bool = False
     ENERGY_DELEGATION_MODE_ALLOW_BURN_TRX_FOR_BANDWITH: bool = False
     ENERGY_DELEGATION_MODE_ALLOW_BURN_TRX_ON_PAYOUT: bool = False
     ENERGY_DELEGATION_MODE_ALLOW_ADDITIONAL_ENERGY_DELEGATION: bool = False
     ENERGY_DELEGATION_MODE_ENERGY_DELEGATION_FACTOR: Decimal = Decimal("1.0")
+    ENERGY_DELEGATION_MODE_TRC20_TRANSFER_ENERGY_ESTIMATE_OVERRIDE: int | None = None
     ENERGY_DELEGATION_MODE_SEPARATE_BALANCE_AND_ENERGY_ACCOUNTS: bool = False
     ENERGY_DELEGATION_MODE_ENERGY_ACCOUNT_PUB_KEY: str | None = None
     # Voting
     SR_VOTING: bool = False
-    SR_VOTES: Json[List[SrVote]] | None = None
+    SR_VOTES: Json[list[SrVote]] | None = None
     SR_VOTING_ALLOW_BURN_TRX: bool = False
     # Token customization
     USDT_MIN_TRANSFER_THRESHOLD: Decimal | None = None
     USDC_MIN_TRANSFER_THRESHOLD: Decimal | None = None
 
-    TOKENS: List[Token] = [
+    TOKENS: list[Token] = [
         Token(
             network=TronNetwork.mainnet,
             symbol=TronSymbol.USDT,
@@ -153,26 +144,4 @@ class Settings(BaseSettings):
     def __hash__(self):
         return hash(42)
 
-    @field_validator("EXTERNAL_DRAIN_CONFIG", mode="after")
-    @classmethod
-    def validate_external_drain_config_states(
-        cls, value: ExternalDrain | None
-    ) -> ExternalDrain | None:
-        if value is None:
-            return value
-
-        aml_check = value.aml_check.state == "enabled"
-        regular_split = value.regular_split.state == "enabled"
-        if not (aml_check or regular_split):
-            raise ValueError(
-                f"At least one workflow should be enabled for EXTERNAL_DRAIN_CONFIG: {aml_check=} {regular_split=}"
-            )
-        return value
-
-
 config = Settings()
-
-if config.EXTERNAL_DRAIN_CONFIG:
-    from .logging import logger
-
-    logger.info(config.EXTERNAL_DRAIN_CONFIG.model_dump_json(indent=4))

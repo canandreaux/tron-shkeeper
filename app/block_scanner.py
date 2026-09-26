@@ -23,6 +23,7 @@ from .exceptions import (
     BadContractResult,
 )
 from .connection_manager import ConnectionManager
+from .repositories import AllStoresKeyReader
 
 
 class BlockScanner:
@@ -91,11 +92,6 @@ class BlockScanner:
     def count_watched_accounts(cls):
         return len(cls.WATCHED_ACCOUNTS)
 
-    @functools.cached_property
-    def main_account(self):
-        return query_db2('select * from keys where type = "fee_deposit" ', one=True)[
-            "public"
-        ]
 
     def get_last_seen_block_num(self) -> int:
         row = query_db2(
@@ -113,7 +109,7 @@ class BlockScanner:
                     f"Last seen block is set to full node height {last_block_num}"
                 )
             query_db2(
-                'INSERT INTO settings VALUES ("last_seen_block_num", ?)',
+                "INSERT INTO settings VALUES ('last_seen_block_num', %s)",
                 (last_block_num,),
             )
         return last_block_num
@@ -121,7 +117,7 @@ class BlockScanner:
     def set_last_seen_block_num(self, block_num: int):
         start_time = time.time()
         query_db2(
-            'UPDATE settings SET value = ? WHERE name = "last_seen_block_num"',
+            "UPDATE settings SET value = %s WHERE name = 'last_seen_block_num'",
             (block_num,),
         )
         logger.debug(
@@ -180,12 +176,9 @@ class BlockScanner:
 
     def scan(self, block_num: int) -> bool:
         from .tasks import transfer_trc20_from, transfer_trx_from
-        from .custom.aml.functions import (
-            add_transaction_to_db,
-        )
-        from .custom.aml.tasks import run_payout_for_tx
 
         try:
+            key_reader = AllStoresKeyReader()
             block = self.download_block(block_num)
             if "transactions" not in block:
                 logger.debug(f"Block {block_num}: No transactions")
@@ -222,94 +215,53 @@ class BlockScanner:
                     raise e
 
                 for tron_tx in tron_tx_list:
-                    if config.EXTERNAL_DRAIN_CONFIG:
-                        #
-                        # Customized workflow (AML)
-                        #
-                        if tron_tx.dst_addr not in valid_addresses:
-                            continue
-                        if tron_tx.status != "SUCCESS":
-                            logger.warning(
-                                f"Skipping notification for bad status TX {tron_tx=}"
-                            )
-                            continue
-                        logger.info(f"Sending notification for TX {tron_tx=}")
-                        self.notify_shkeeper(tron_tx.symbol.value, tron_tx.txid)
-                        if (
-                            self.main_account
-                            not in (tron_tx.src_addr, tron_tx.dst_addr)
-                            and tron_tx.dst_addr in valid_addresses
-                            and tron_tx.src_addr not in valid_addresses
-                        ):  # to one-time from foreign
-                            add_transaction_to_db(
-                                tron_tx.txid,
-                                tron_tx.dst_addr,
-                                tron_tx.amount,
-                                tron_tx.symbol,
-                            )
-                            run_payout_for_tx.apply_async(
-                                args=[
-                                    tron_tx.symbol,
-                                    tron_tx.dst_addr,
-                                    tron_tx.txid,
-                                ],
-                                # wait for 5min for data to be updated in AMLBot
-                                countdown=config.AML_WAIT_BEFORE_API_CALL,
-                            )
+                    if (
+                        tron_tx.symbol == "TRX"
+                        and tron_tx.src_addr in valid_addresses
+                        and tron_tx.dst_addr in valid_addresses
+                    ):
+                        logger.info(
+                            f"Ignoring local TRX tx: {tron_tx}"
+                        )
+                        continue
 
-                        elif (
-                            tron_tx.dst_addr in valid_addresses
-                            and tron_tx.src_addr == self.main_account
-                        ):  # to one-time from fee-deposit
-                            add_transaction_to_db(
-                                tron_tx.txid,
-                                tron_tx.dst_addr,
-                                tron_tx.amount,
-                                tron_tx.symbol,
-                                "from_fee",
+                    if tron_tx.dst_addr in valid_addresses:
+                        if tron_tx.status == "SUCCESS":
+                            logger.info(f"Sending notification for {tron_tx}")
+                            self.notify_shkeeper(tron_tx.symbol.value, tron_tx.txid)
+                            store_id = key_reader.get_store_id_by_public(
+                                tron_tx.dst_addr
                             )
-                        else:
-                            raise Exception("")
-                    else:
-                        #
-                        # Default workflow
-                        #
-                        if (
-                            tron_tx.symbol == "TRX"
-                            and tron_tx.src_addr == self.main_account
-                            and tron_tx.dst_addr in valid_addresses
-                        ):
-                            logger.info(
-                                f"Ignoring TRX transaction from main to onetime acc: {tron_tx}"
-                            )
-                            continue
-
-                        if tron_tx.dst_addr in valid_addresses:
-                            if tron_tx.status == "SUCCESS":
-                                logger.info(f"Sending notification for {tron_tx}")
-                                self.notify_shkeeper(tron_tx.symbol.value, tron_tx.txid)
-                                # Send funds to main account
-                                if tron_tx.is_trc20:
-                                    if config.DEVMODE_CELERY_NODELAY:
-                                        transfer_trc20_from(
-                                            tron_tx.dst_addr, tron_tx.symbol
-                                        )
-                                    else:
-                                        transfer_trc20_from.delay(
-                                            tron_tx.dst_addr, tron_tx.symbol
-                                        )
-                                else:
-                                    if config.ENERGY_DELEGATION_MODE:
-                                        # Don't send TRX immediately to not waste free bandwidth.
-                                        # Funds will be sweeped by scan_accounts task
-                                        # if the account does not hold TRC20 tokens.
-                                        pass
-                                    else:
-                                        transfer_trx_from.delay(tron_tx.dst_addr)
-                            else:
+                            if store_id is None:
                                 logger.warning(
-                                    f"Not sending notification for tx with status {tron_tx.status}: {tron_tx}"
+                                    "Skipping sweep for watched address without an "
+                                    f"owner: {tron_tx.dst_addr}"
                                 )
+                                continue
+                            # Send funds to main account
+                            if tron_tx.is_trc20:
+                                if config.DEVMODE_CELERY_NODELAY:
+                                    transfer_trc20_from(
+                                        tron_tx.dst_addr, tron_tx.symbol, store_id
+                                    )
+                                else:
+                                    transfer_trc20_from.delay(
+                                        tron_tx.dst_addr, tron_tx.symbol, store_id
+                                    )
+                            else:
+                                if config.ENERGY_DELEGATION_MODE:
+                                    # Don't send TRX immediately to not waste free bandwidth.
+                                    # Funds will be sweeped by scan_accounts task
+                                    # if the account does not hold TRC20 tokens.
+                                    pass
+                                else:
+                                    transfer_trx_from.delay(
+                                        tron_tx.dst_addr, store_id
+                                    )
+                        else:
+                            logger.warning(
+                                f"Not sending notification for tx with status {tron_tx.status}: {tron_tx}"
+                            )
             logger.debug(
                 f"block {block_num} info extraction time: {time.time() - start}"
             )

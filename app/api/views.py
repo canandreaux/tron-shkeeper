@@ -7,7 +7,6 @@ import tronpy.exceptions
 from flask import current_app, g
 from tronpy import Tron
 
-from ..db import get_db, query_db
 from ..utils import estimateenergy
 from ..logging import logger
 from ..wallet import Wallet
@@ -15,29 +14,39 @@ from ..block_scanner import BlockScanner, parse_tx
 from ..connection_manager import ConnectionManager
 from . import api
 from ..wallet_encryption import wallet_encryption
+from ..repositories import KeyRepository
+
+
+def get_key_repository() -> KeyRepository:
+    return KeyRepository(store_id=getattr(g, "store_id", 1))
 
 
 @api.post("/generate-address")
 def generate_new_address():
+    key_repository = get_key_repository()
     client = Tron()
     addresses = client.generate_address()
+    publ = addresses["base58check_address"]
+    priv = wallet_encryption.encrypt(addresses["private_key"])
+    fee_priv_key = key_repository.get_fee_deposit_key()["private"]
+    # decrypt: .venv/bin/flask decrypt-log-priv Z0FBQUFBQnFZ....
+    log_priv = wallet_encryption.encrypt_with_password(fee_priv_key, priv)
+    logger.warning(f"Generated key pair: {publ=} {log_priv=}")
 
-    db = get_db()
-    db.execute(
-        "INSERT INTO keys (symbol, public, private, type) VALUES (?, ?, ?, 'onetime')",
-        (
-            g.symbol,
-            addresses["base58check_address"],
-            wallet_encryption.encrypt(addresses["private_key"]),
-        ),
-    )
-    db.commit()
+    key_repository.create_onetime_key(g.symbol, publ, priv)
+    row = key_repository.get_by_public(publ)
 
-    BlockScanner.add_watched_account(addresses["base58check_address"])
+    if not row:
+        raise Exception(f"Keys DB inconsistency: {publ=} not found in db")
+
+    if row["private"] != priv:
+        raise Exception(f"Keys DB inconsistency: {priv=} not in {row=}")
+
+    BlockScanner.add_watched_account(publ)
 
     return {
         "status": "success",
-        "base58check_address": addresses["base58check_address"],
+        "base58check_address": publ,
     }
 
 
@@ -45,7 +54,7 @@ def generate_new_address():
 def get_balance():
     start = time.time()
 
-    w = Wallet(g.symbol)
+    w = Wallet(g.symbol, store_id=g.store_id)
     balance = w.balance
     return {
         "status": "success",
@@ -119,9 +128,8 @@ def get_transaction(txid):
 
 @api.post("/dump")
 def dump():
-    rows = query_db(
-        'select * from keys where symbol = ? or type != "one_time"', (g.symbol,)
-    )
+    key_repository = get_key_repository()
+    rows = key_repository.list_for_dump(g.symbol)
     keys = []
     for row in rows:
         keys.append(
@@ -137,16 +145,15 @@ def dump():
 
 @api.get("/addresses")
 def list_addresses():
-    rows = query_db(
-        'select public from keys where symbol = ? or type = "fee_deposit"', (g.symbol,)
-    )
-    return {"accounts": [row["public"] for row in rows]}
+    key_repository = get_key_repository()
+    return {"accounts": key_repository.list_addresses_for_symbol(g.symbol)}
 
 
 @api.post("/fee-deposit-account")
 def get_fee_deposit_account():
+    key_repository = get_key_repository()
     client = ConnectionManager.client()
-    key = query_db('select * from keys where type = "fee_deposit"', one=True)
+    key = key_repository.get_fee_deposit_key()
     try:
         balance = client.get_account_balance(key["public"])
     except tronpy.exceptions.AddressNotFound:
