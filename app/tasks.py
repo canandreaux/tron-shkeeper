@@ -24,6 +24,7 @@ from app.schemas import KeyType
 
 from . import celery
 from .config import config
+from .energy import estimate_transfer_energy
 from .wallet import Wallet
 from .repositories import AllStoresKeyReader, BalanceRepository, KeyRepository
 from .utils import (
@@ -309,11 +310,12 @@ def transfer_trc20_from(onetime_acc, symbol, store_id: int = 1):
             )
         else:
             logger.info("Estimate the amount of energy needed to make transfer")
-            energy_needed = tron_client.get_estimated_energy(
+            energy_needed = estimate_transfer_energy(
+                tron_client,
                 onetime_publ_key,
                 contract_address,
-                "transfer(address,uint256)",
-                trx_abi.encode_single("(address,uint256)", (main_publ_key, 42)).hex(),
+                main_publ_key,
+                token_balance,
             )
             logger.info(f"Estimated amount of energy for transfer is: {energy_needed}")
 
