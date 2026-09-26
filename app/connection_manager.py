@@ -212,24 +212,17 @@ class ConnectionManager:
         return False
 
     def refresh_best_server_thread_handler(self):
-        try:
-            if self.get_current_server_id() is None:
-                while True:
-                    try:
-                        server_id = self.get_best_server_id()
-                        query_db2(
-                            "INSERT INTO settings VALUES ('current_server_id', %s)",
-                            (server_id,),
-                        )
-                        logger.debug(f"Current server set to: {server_id}")
-                        break
-                    except Exception as e:
-                        logger.warning(f"Current server set error: {e}")
-                        time.sleep(config.MULTISERVER_REFRESH_BEST_SERVER_PERIOD)
-
-            while True:
-                self.refresh_best_server()
-        except Exception as e:
-            logger.warning(f"Exception in best server refresh loop: {e}")
-        finally:
+        while True:
+            try:
+                if self.get_current_server_id() is None:
+                    server_id = self.get_best_server_id()
+                    query_db2(
+                        "INSERT INTO settings VALUES ('current_server_id', %s)",
+                        (server_id,),
+                    )
+                    logger.debug(f"Current server set to: {server_id}")
+                else:
+                    self.refresh_best_server()
+            except Exception as e:
+                logger.warning(f"Exception in best server refresh loop: {e}")
             time.sleep(config.MULTISERVER_REFRESH_BEST_SERVER_PERIOD)
