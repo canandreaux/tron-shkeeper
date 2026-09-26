@@ -2,7 +2,7 @@ from unittest.mock import Mock
 
 import pytest
 from tronpy.abi import trx_abi
-from tronpy.exceptions import UnknownError
+from tronpy.exceptions import UnknownError, ValidationError
 
 from app.energy import estimate_transfer_energy
 
@@ -25,9 +25,10 @@ def test_primary_estimate_uses_actual_transfer_amount():
     client.trigger_constant_contract.assert_not_called()
 
 
-def test_unsupported_estimation_falls_back_to_simulation():
+@pytest.mark.parametrize("error_type", [UnknownError, ValidationError])
+def test_unsupported_estimation_falls_back_to_simulation(error_type):
     client = Mock()
-    client.get_estimated_energy.side_effect = UnknownError(
+    client.get_estimated_energy.side_effect = error_type(
         "this node does not support estimate energy"
     )
     client.trigger_constant_contract.return_value = {
