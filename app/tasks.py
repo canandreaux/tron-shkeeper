@@ -383,7 +383,7 @@ def transfer_trc20_from(onetime_acc, symbol, store_id: int = 1):
                 return
 
             # Check available bandwidth before transfer trc20 tokens
-            # from one_time to fee_deposit account
+            # from onetime to fee_deposit account
             if not has_free_bw(
                 onetime_publ_key, config.BANDWIDTH_PER_TRC20_TRANSFER_CALL
             ):

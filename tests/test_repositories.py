@@ -1,8 +1,33 @@
+import sqlite3
 from typing import Any
 
 import pytest
 
 from app import repositories
+
+
+def test_dump_filters_other_symbols_and_stores(monkeypatch):
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.execute("CREATE TABLE keys (store_id INTEGER, symbol TEXT, type TEXT, public TEXT)")
+    connection.executemany("INSERT INTO keys VALUES (?, ?, ?, ?)", [
+        (7, "USDT", "onetime", "requested"),
+        (7, "TRX", "onetime", "other-token"),
+        (7, "_", "fee_deposit", "fee"),
+        (7, "TRX", "main", "main"),
+        (8, "USDT", "onetime", "other-store"),
+        (8, "_", "fee_deposit", "other-store-fee"),
+    ])
+
+    def query(query, args=(), one=False):
+        return [dict(row) for row in connection.execute(query.replace("%s", "?"), args)]
+
+    monkeypatch.setattr(repositories, "query_db2", query)
+    try:
+        rows = repositories.KeyRepository(7).list_for_dump("USDT")
+        assert {row["public"] for row in rows} == {"requested", "fee", "main"}
+    finally:
+        connection.close()
 
 
 def test_key_repository_requires_positive_store_id():

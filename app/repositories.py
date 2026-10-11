@@ -85,7 +85,7 @@ class KeyRepository:
             query_db2(
                 "SELECT * FROM `keys` "
                 "WHERE store_id = %s AND (symbol = %s OR type != %s)",
-                (self.store_id, symbol, "one_time"),
+                (self.store_id, symbol, "onetime"),
             )
             or [],
         )
